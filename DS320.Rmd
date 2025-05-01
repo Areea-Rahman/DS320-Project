@@ -1,0 +1,97 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+global_economy<- read.csv("~/Desktop/Global Economy Indicators.csv")
+education<- read.csv("~/Desktop/learning-adjusted-years-of-school-lays.csv")
+govt_expenditure<- read.csv("~/Desktop/Goverment Expenditure.csv")
+```
+
+```{r}
+#View current data distributions
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+df_long <- global_economy %>%
+  select(where(is.numeric)) %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value")
+
+ggplot(df_long, aes(x = value)) +
+  geom_histogram(fill = "steelblue", bins = 30) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal()
+```
+
+
+```{r}
+#Normalize Data and View Histogram
+global_economy$Country<- trimws(global_economy$Country, which = "both")
+global_economy<-rename(global_economy,Year_G=Year)
+global_norm <- global_economy %>%
+  mutate(across(.cols = where(is.numeric) & !c("CountryID", "Country","Year_G"), .fns = log1p))
+
+global_norm_hist <- global_economy %>%
+  mutate(across(.cols = where(is.numeric) & !c("CountryID", "Country","Year_G"), .fns = log1p)) %>%
+  pivot_longer(cols =where(is.numeric), names_to = "variable", values_to = "value")
+
+ggplot(global_norm_hist, aes(x = value)) +
+  geom_histogram(fill = "steelblue", bins = 30) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal()
+```
+
+```{r}
+#Data Integration
+global_norm <- global_norm %>% filter(Year_G >= 2010)
+global_norm$key <- paste(global_norm$Country, global_norm$Year_G)
+education$key <- paste(education$Entity, education$Year)
+
+library(fuzzyjoin)
+
+joined <- stringdist_inner_join(
+  global_norm, education,
+  by = "key",
+  method = "jw",       # Jaro-Winkler is good for names
+  max_dist = 0.01       # Tweak based on your data
+)
+```
+
+
+```{r}
+govt_expenditure <- govt_expenditure %>% select(Country.Name, Country.Code,X2010..YR2010.,
+X2017..YR2017., X2018..YR2018., X2020..YR2020.)
+govt_expenditure <- govt_expenditure %>% mutate(across(everything(), ~na_if(., "..")))
+clean_govt <- na.omit(govt_expenditure)
+colnames(clean_govt) <- c("Country", "Code", "2010", "2017","2018","2020")
+govt_long <- clean_govt %>%
+  pivot_longer(cols = c("2010","2017","2018","2020"),
+               names_to = "Year",
+               values_to = "Government Education Expenditure")
+
+govt_long$'Government Education Expenditure'<- as.numeric(govt_long$'Government Education Expenditure')
+govt_long$key <- paste(govt_long$Country, govt_long$Year)
+joined <- joined %>% select(-c(key.x,key.y, Entity, Code, Year,CountryID))
+joined$key <- paste(joined$Country, joined$Year_G)
+
+joined_3 <- stringdist_inner_join(
+  govt_long, joined,
+  by = "key",
+  method = "jw",       # Jaro-Winkler is good for names
+  max_dist = 0.01       # Tweak based on your data
+)
+
+```
+
+
+```{r}
+library(ggplot2)
+
+ggplot(joined_3, aes(x = `Government Education Expenditure`, y = Learning.Adjusted.Years.of.School)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +  # regression line
+  labs(x = "Government Expenditure", y = "Learning Adjusted Years of School", title = "Relationship between Education Expenditure and Learning Adjusted Years of School")
+```
+
